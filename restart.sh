@@ -41,6 +41,10 @@ print_clash_log_tail() {
     echo -e "\nClash日志最后40行："
     tail -n 40 "$Log_Dir/clash.log"
     echo
+    if grep -qi "unsupport proxy type: vless" "$Log_Dir/clash.log"; then
+      echo "检测到当前内核不支持 VLESS，请先执行: bash install-mihomo.sh"
+      echo
+    fi
   fi
 }
 
@@ -58,6 +62,27 @@ start_clash() {
   wait "$clash_pid" 2>/dev/null || true
   print_clash_log_tail
   return 1
+}
+
+select_clash_bin() {
+  case "$CpuArch" in
+    x86_64|amd64)
+      echo "$Server_Dir/bin/clash-linux-amd64"
+      ;;
+    aarch64|arm64)
+      if [ -x "$Server_Dir/bin/clash-linux-arm64" ]; then
+        echo "$Server_Dir/bin/clash-linux-arm64"
+      else
+        echo "$Server_Dir/bin/clash-linux-armv7"
+      fi
+      ;;
+    armv7*|armv7l|arm*)
+      echo "$Server_Dir/bin/clash-linux-armv7"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 # 定义路劲变量
@@ -98,15 +123,10 @@ fi
 ## 重启启动clash服务
 Text5="服务启动成功！"
 Text6="服务启动失败！"
-if [[ $CpuArch =~ "x86_64" ]]; then
-  start_clash "$Server_Dir/bin/clash-linux-amd64"
-	ReturnStatus=$?
-	if_success $Text5 $Text6 $ReturnStatus
-elif [[ $CpuArch =~ "aarch64" ]]; then
-	start_clash "$Server_Dir/bin/clash-linux-armv7"
-	ReturnStatus=$?
-	if_success $Text5 $Text6 $ReturnStatus
-else
+Clash_Bin=$(select_clash_bin) || {
 	echo -e "\033[31m\n[ERROR] Unsupported CPU Architecture！\033[0m"
 	exit 1
-fi
+}
+start_clash "$Clash_Bin"
+ReturnStatus=$?
+if_success $Text5 $Text6 $ReturnStatus
