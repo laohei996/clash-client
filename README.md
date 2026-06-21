@@ -13,13 +13,13 @@
 下载项目
 
 ```bash
-$ git clone https://github.com/wanhebin/clash-for-linux.git
+$ git clone https://github.com/laohei996/clash-client.git
 ```
 
 进入到项目目录，编辑`.env`文件，修改变量`CLASH_URL`的值。
 
 ```bash
-$ cd clash-for-linux
+$ cd clash-client
 $ vim .env
 ```
 
@@ -32,7 +32,7 @@ $ vim .env
 - 进入项目目录
 
 ```bash
-$ cd clash-for-linux
+$ cd clash-client
 ```
 
 - 运行启动脚本
@@ -101,7 +101,7 @@ https_proxy=http://127.0.0.1:7890
 - 进入项目目录
 
 ```bash
-$ cd clash-for-linux
+$ cd clash-client
 ```
 
 - 关闭服务
@@ -167,6 +167,21 @@ $ docker run -d --restart=always --name clash -p 9090:9090 -p 7890:7890 -p 7891:
 ```bash
 $ docker run -d  --restart=always --name clash -p 9090:9090 -p 7890:7890 -p 7891:7891 -e CLASH_URL="your_subscription_url" -e PRIVATE_VMESS="vmess://xxx|vmess://yyy" clash-for-linux
 ```
+
+### 运行容器（包含私有vless节点）
+
+```bash
+$ docker run -d --restart=always --name clash -p 9090:9090 -p 7890:7890 -p 7891:7891 -e CLASH_URL="your_subscription_url" -e PRIVATE_VLESS="vless://uuid@example.com:443?encryption=none&security=tls&sni=example.com&type=ws&host=example.com&path=%2F#vless-node" clash-for-linux
+```
+
+多个私有vless节点可使用 `|` 分隔，例如：
+
+```bash
+$ docker run -d --restart=always --name clash -p 9090:9090 -p 7890:7890 -p 7891:7891 -e CLASH_URL="your_subscription_url" -e PRIVATE_VLESS="vless://uuid1@example.com:443?encryption=none&security=tls&type=tcp#vless-1|vless://uuid2@example.net:443?encryption=none&security=tls&type=ws&host=example.net&path=%2F#vless-2" clash-for-linux
+```
+
+> **注意：**
+> 脚本会将 `PRIVATE_VLESS` 转换为 Clash 配置并注入到代理组中；实际运行vless节点需要使用支持vless的 Clash Meta/Mihomo 内核。当前项目内置的 Dreamacro Clash 二进制可能不支持vless。
 
 ### 进入容器
 

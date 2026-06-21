@@ -14,6 +14,12 @@ Temp_Dir="$Server_Dir/temp"
 Log_Dir="$Server_Dir/logs"
 URL=${CLASH_URL}
 
+if [ -x /usr/bin/awk ]; then
+  AWK_BIN="/usr/bin/awk"
+else
+  AWK_BIN="awk"
+fi
+
 # 自定义action函数，实现通用action功能
 success() {
   echo -en "\\033[60G[\\033[1;32m  OK  \\033[0;39m]\r"
@@ -99,6 +105,148 @@ parse_vmess_url() {
 EOF
 }
 
+url_decode() {
+    local encoded="${1//+/ }"
+    printf '%b' "${encoded//%/\\x}"
+}
+
+get_query_param() {
+    local query=$1
+    local key=$2
+    local pair
+
+    IFS='&' read -ra QUERY_PAIRS <<< "$query"
+    for pair in "${QUERY_PAIRS[@]}"; do
+        if [[ $pair == "$key="* ]]; then
+            url_decode "${pair#*=}"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+yaml_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+append_yaml_field() {
+    local key=$1
+    local value=$2
+
+    if [ -n "$value" ]; then
+        echo "    ${key}: \"$(yaml_escape "$value")\""
+    fi
+}
+
+# 解析vless分享链接并生成clash配置节点
+parse_vless_url() {
+    local vless_url=$1
+    local payload="${vless_url#vless://}"
+    local fragment=""
+    local query=""
+    local authority=""
+
+    if [ "$payload" = "$vless_url" ]; then
+        echo "无效的vless链接" >&2
+        return 1
+    fi
+
+    if [[ $payload == *"#"* ]]; then
+        fragment="${payload#*#}"
+        payload="${payload%%#*}"
+    fi
+
+    if [[ $payload == *"?"* ]]; then
+        query="${payload#*\?}"
+        authority="${payload%%\?*}"
+    else
+        authority="$payload"
+    fi
+
+    local uuid="${authority%@*}"
+    local server_port="${authority#*@}"
+    local server=""
+    local port=""
+
+    if [ "$uuid" = "$server_port" ] || [ -z "$uuid" ] || [ -z "$server_port" ]; then
+        echo "无效的vless链接" >&2
+        return 1
+    fi
+
+    if [[ $server_port =~ ^\[(.*)\]:([0-9]+)$ ]]; then
+        server="${BASH_REMATCH[1]}"
+        port="${BASH_REMATCH[2]}"
+    else
+        server="${server_port%:*}"
+        port="${server_port##*:}"
+    fi
+
+    if [ -z "$server" ] || [ -z "$port" ] || [ "$server" = "$port" ]; then
+        echo "无效的vless链接" >&2
+        return 1
+    fi
+
+    local name=$(url_decode "$fragment")
+    local network=$(get_query_param "$query" "type")
+    local security=$(get_query_param "$query" "security")
+    local host=$(get_query_param "$query" "host")
+    local path=$(get_query_param "$query" "path")
+    local sni=$(get_query_param "$query" "sni")
+    local fp=$(get_query_param "$query" "fp")
+    local flow=$(get_query_param "$query" "flow")
+    local allow_insecure=$(get_query_param "$query" "allowInsecure")
+    local grpc_service_name=$(get_query_param "$query" "serviceName")
+    local grpc_mode=$(get_query_param "$query" "mode")
+    local public_key=$(get_query_param "$query" "pbk")
+    local short_id=$(get_query_param "$query" "sid")
+    local spider_x=$(get_query_param "$query" "spx")
+    local tls=false
+
+    [ -z "$name" ] && name="vless-${server}:${port}"
+    [ -z "$network" ] && network="tcp"
+
+    if [ "$security" = "tls" ] || [ "$security" = "reality" ]; then
+        tls=true
+    fi
+
+    echo "  - name: \"$(yaml_escape "$name")\""
+    echo "    type: vless"
+    echo "    server: \"$(yaml_escape "$server")\""
+    echo "    port: $port"
+    echo "    uuid: $uuid"
+    echo "    network: $network"
+    echo "    udp: true"
+    echo "    tls: $tls"
+    append_yaml_field "servername" "$sni"
+    append_yaml_field "client-fingerprint" "$fp"
+    append_yaml_field "flow" "$flow"
+
+    if [ "$allow_insecure" = "1" ] || [ "$allow_insecure" = "true" ]; then
+        echo "    skip-cert-verify: true"
+    fi
+
+    if [ "$network" = "ws" ]; then
+        echo "    ws-opts:"
+        [ -n "$path" ] && echo "      path: \"$(yaml_escape "$path")\""
+        if [ -n "$host" ]; then
+            echo "      headers:"
+            echo "        Host: \"$(yaml_escape "$host")\""
+        fi
+    elif [ "$network" = "grpc" ]; then
+        echo "    grpc-opts:"
+        append_yaml_field "grpc-service-name" "$grpc_service_name" | sed 's/^    /      /'
+        append_yaml_field "grpc-mode" "$grpc_mode" | sed 's/^    /      /'
+    fi
+
+    if [ "$security" = "reality" ]; then
+        echo "    reality-opts:"
+        [ -n "$public_key" ] && echo "      public-key: \"$(yaml_escape "$public_key")\""
+        [ -n "$short_id" ] && echo "      short-id: \"$(yaml_escape "$short_id")\""
+        [ -n "$spider_x" ] && echo "      spider-x: \"$(yaml_escape "$spider_x")\""
+    fi
+}
+
 # 检查url是否有效
 echo -e '\n正在检测订阅地址...'
 Text1="Clash订阅地址可访问！"
@@ -135,46 +283,26 @@ if_success $Text3 $Text4 $ReturnStatus
 # 取出代理相关配置 
 sed -n '/^proxies:/,$p' $Temp_Dir/clash.yaml > $Temp_Dir/proxy.txt
 
-# 新增 append_private_vmess 函数，在 $Temp_Dir/proxy.txt 的 proxies: 行后插入私有 vmess 节点，并更新 proxy-groups
-append_private_vmess() {
+# 在 $Temp_Dir/proxy.txt 的 proxies: 行后插入私有节点，并更新 proxy-groups
+append_private_nodes() {
     local proxy_file="$Temp_Dir/proxy.txt"
     local tmp_file="$Temp_Dir/proxy_with_private.txt"
-    local vmess_nodes=""
-    local node_names=()
+    local nodes_file="$Temp_Dir/private_nodes.txt"
+    local node_names_file="$Temp_Dir/private_node_names.txt"
+    local nodes="$1"
+    local node_names="$2"
 
-    # 生成所有私有节点内容并收集节点名称
-    IFS='|' read -ra VMESS_ARRAY <<< "$PRIVATE_VMESS"
-    for vmess_url in "${VMESS_ARRAY[@]}"; do
-        if [[ $vmess_url == vmess://* ]]; then
-            # 解码vmess URL获取节点名称
-            local decoded=$(echo "$vmess_url" | sed 's/vmess:\/\///' | base64 -d 2>/dev/null)
-            local node_name=""
-            
-            if command -v jq >/dev/null 2>&1; then
-                node_name=$(echo "$decoded" | jq -r '.ps // empty')
-            else
-                node_name=$(echo "$decoded" | grep -o '"ps":"[^"]*"' | sed 's/"ps":"\([^"]*\)"/\1/')
-            fi
-            
-            if [ -n "$node_name" ]; then
-                node_names+=("$node_name")
-            fi
-            
-            vmess_nodes+=$(parse_vmess_url "$vmess_url")
-            vmess_nodes+=$'\n'
-        fi
-    done
-
-    if [ -z "$vmess_nodes" ]; then
-        echo "没有有效的私有 vmess 节点"
-        return 0
-    fi
+    printf "%s" "$nodes" > "$nodes_file"
+    printf "%s" "$node_names" > "$node_names_file"
 
     # 在 proxies: 行后插入节点
-    awk -v nodes="$vmess_nodes" '
+    "$AWK_BIN" -v nodes_file="$nodes_file" '
         /^proxies:/ {
             print $0
-            printf "%s\n", nodes
+            while ((getline node < nodes_file) > 0) {
+                print node
+            }
+            close(nodes_file)
             next
         }
         { print }
@@ -183,13 +311,25 @@ append_private_vmess() {
     mv "$tmp_file" "$proxy_file"
     
     # 将节点名称添加到 proxy-groups 中
-    if [ ${#node_names[@]} -gt 0 ]; then
+    if [ -n "$node_names" ]; then
         local tmp_file2="$Temp_Dir/proxy_with_groups.txt"
         
         # 为每个 proxy-group 添加自定义节点
-        awk -v names="${node_names[*]}" '
+        "$AWK_BIN" -v node_names_file="$node_names_file" '
+        function yaml_quote(value) {
+            gsub(/\\/, "\\\\", value)
+            gsub(/"/, "\\\"", value)
+            return "\"" value "\""
+        }
         BEGIN {
-            split(names, name_array, " ")
+            name_count = 0
+            while ((getline name < node_names_file) > 0) {
+                if (name != "") {
+                    name_count++
+                    name_array[name_count] = name
+                }
+            }
+            close(node_names_file)
             in_proxy_group = 0
             buffer = ""
             in_proxies = 0
@@ -203,9 +343,9 @@ append_private_vmess() {
             if (buffer != "") {
                 # 输出之前缓存的代理组内容，并在末尾添加自定义节点
                 print buffer
-                for (i in name_array) {
+                for (i = 1; i <= name_count; i++) {
                     if (name_array[i] != "") {
-                        print "      - " name_array[i]
+                        print "      - " yaml_quote(name_array[i])
                     }
                 }
                 buffer = ""
@@ -226,9 +366,9 @@ append_private_vmess() {
         in_proxy_group && in_proxies && !/^      -/ {
             # 代理列表结束，输出缓存内容并添加自定义节点
             print buffer
-            for (i in name_array) {
+            for (i = 1; i <= name_count; i++) {
                 if (name_array[i] != "") {
-                    print "      - " name_array[i]
+                    print "      - " yaml_quote(name_array[i])
                 }
             }
             buffer = ""
@@ -240,9 +380,9 @@ append_private_vmess() {
             if (buffer != "") {
                 # 输出之前缓存的代理组内容，并在末尾添加自定义节点
                 print buffer
-                for (i in name_array) {
+                for (i = 1; i <= name_count; i++) {
                     if (name_array[i] != "") {
-                        print "      - " name_array[i]
+                        print "      - " yaml_quote(name_array[i])
                     }
                 }
                 buffer = ""
@@ -260,10 +400,88 @@ append_private_vmess() {
     fi
 }
 
+# 新增 append_private_vmess 函数，处理私有 vmess 节点
+append_private_vmess() {
+    local vmess_nodes=""
+    local node_names=""
+
+    # 生成所有私有节点内容并收集节点名称
+    IFS='|' read -ra VMESS_ARRAY <<< "$PRIVATE_VMESS"
+    for vmess_url in "${VMESS_ARRAY[@]}"; do
+        if [[ $vmess_url == vmess://* ]]; then
+            # 解码vmess URL获取节点名称
+            local decoded=$(echo "$vmess_url" | sed 's/vmess:\/\///' | base64 -d 2>/dev/null)
+            local node_name=""
+
+            if command -v jq >/dev/null 2>&1; then
+                node_name=$(echo "$decoded" | jq -r '.ps // empty')
+            else
+                node_name=$(echo "$decoded" | grep -o '"ps":"[^"]*"' | sed 's/"ps":"\([^"]*\)"/\1/')
+            fi
+
+            if [ -n "$node_name" ]; then
+                node_names+="$node_name"$'\n'
+            fi
+
+            vmess_nodes+=$(parse_vmess_url "$vmess_url")
+            vmess_nodes+=$'\n'
+        fi
+    done
+
+    if [ -z "$vmess_nodes" ]; then
+        echo "没有有效的私有 vmess 节点"
+        return 0
+    fi
+
+    append_private_nodes "$vmess_nodes" "$node_names"
+}
+
+# 新增 append_private_vless 函数，处理私有 vless 节点
+append_private_vless() {
+    local vless_nodes=""
+    local node_names=""
+
+    IFS='|' read -ra VLESS_ARRAY <<< "$PRIVATE_VLESS"
+    for vless_url in "${VLESS_ARRAY[@]}"; do
+        if [[ $vless_url == vless://* ]]; then
+            local payload="${vless_url#vless://}"
+            local node_name=""
+
+            if [[ $payload == *"#"* ]]; then
+                node_name=$(url_decode "${payload#*#}")
+            else
+                local authority="${payload%%\?*}"
+                local server_port="${authority#*@}"
+                node_name="vless-${server_port}"
+            fi
+
+            if [ -n "$node_name" ]; then
+                node_names+="$node_name"$'\n'
+            fi
+
+            vless_nodes+=$(parse_vless_url "$vless_url")
+            vless_nodes+=$'\n'
+        fi
+    done
+
+    if [ -z "$vless_nodes" ]; then
+        echo "没有有效的私有 vless 节点"
+        return 0
+    fi
+
+    append_private_nodes "$vless_nodes" "$node_names"
+}
+
 # 添加私有vmess节点（如果环境变量中存在）
 if [ -n "$PRIVATE_VMESS" ]; then
     echo "正在处理私有vmess节点..."
     append_private_vmess
+fi
+
+# 添加私有vless节点（如果环境变量中存在）
+if [ -n "$PRIVATE_VLESS" ]; then
+    echo "正在处理私有vless节点..."
+    append_private_vless
 fi
 
 # 合并形成新的config.yaml
