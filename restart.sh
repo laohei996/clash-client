@@ -36,6 +36,30 @@ if_success() {
   fi
 }
 
+print_clash_log_tail() {
+  if [ -f "$Log_Dir/clash.log" ]; then
+    echo -e "\nClash日志最后40行："
+    tail -n 40 "$Log_Dir/clash.log"
+    echo
+  fi
+}
+
+start_clash() {
+  local bin_path=$1
+
+  nohup "$bin_path" -d "$Conf_Dir" &> "$Log_Dir/clash.log" &
+  local clash_pid=$!
+
+  sleep 1
+  if kill -0 "$clash_pid" 2>/dev/null; then
+    return 0
+  fi
+
+  wait "$clash_pid" 2>/dev/null || true
+  print_clash_log_tail
+  return 1
+}
+
 # 定义路劲变量
 Server_Dir=$(cd $(dirname "${BASH_SOURCE[0]}") && pwd)
 Conf_Dir="$Server_Dir/conf"
@@ -49,6 +73,7 @@ Text2="服务关闭失败！"
 # 查询并关闭程序进程
 PID_NUM=`ps -ef | grep [c]lash-linux-a | wc -l`
 PID=`ps -ef | grep [c]lash-linux-a | awk '{print $2}'`
+ReturnStatus=0
 if [ $PID_NUM -ne 0 ]; then
 	kill -9 $PID
   ReturnStatus=$?
@@ -74,11 +99,11 @@ fi
 Text5="服务启动成功！"
 Text6="服务启动失败！"
 if [[ $CpuArch =~ "x86_64" ]]; then
-  nohup $Server_Dir/bin/clash-linux-amd64 -d $Conf_Dir &> $Log_Dir/clash.log &
+  start_clash "$Server_Dir/bin/clash-linux-amd64"
 	ReturnStatus=$?
 	if_success $Text5 $Text6 $ReturnStatus
 elif [[ $CpuArch =~ "aarch64" ]]; then
-	nohup $Server_Dir/bin/clash-linux-armv7 -d $Conf_Dir &> $Log_Dir/clash.log &
+	start_clash "$Server_Dir/bin/clash-linux-armv7"
 	ReturnStatus=$?
 	if_success $Text5 $Text6 $ReturnStatus
 else

@@ -58,6 +58,30 @@ if_success() {
   fi
 }
 
+print_clash_log_tail() {
+  if [ -f "$Log_Dir/clash.log" ]; then
+    echo -e "\nClash日志最后40行："
+    tail -n 40 "$Log_Dir/clash.log"
+    echo
+  fi
+}
+
+start_clash() {
+  local bin_path=$1
+
+  nohup "$bin_path" -d "$Conf_Dir" &> "$Log_Dir/clash.log" &
+  local clash_pid=$!
+
+  sleep 1
+  if kill -0 "$clash_pid" 2>/dev/null; then
+    return 0
+  fi
+
+  wait "$clash_pid" 2>/dev/null || true
+  print_clash_log_tail
+  return 1
+}
+
 # 临时取消环境变量
 unset http_proxy
 unset https_proxy
@@ -519,11 +543,11 @@ echo -e '\n正在启动Clash服务...'
 Text5="服务启动成功！"
 Text6="服务启动失败！"
 if [[ $CpuArch =~ "x86_64" ]]; then
-	nohup $Server_Dir/bin/clash-linux-amd64 -d $Conf_Dir &> $Log_Dir/clash.log &
+	start_clash "$Server_Dir/bin/clash-linux-amd64"
 	ReturnStatus=$?
 	if_success $Text5 $Text6 $ReturnStatus
 elif [[ $CpuArch =~ "aarch64" ]]; then
-	nohup $Server_Dir/bin/clash-linux-armv7 -d $Conf_Dir &> $Log_Dir/clash.log &
+	start_clash "$Server_Dir/bin/clash-linux-armv7"
 	ReturnStatus=$?
 	if_success $Text5 $Text6 $ReturnStatus
 else
