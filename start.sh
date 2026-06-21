@@ -14,6 +14,8 @@ Temp_Dir="$Server_Dir/temp"
 Log_Dir="$Server_Dir/logs"
 URL=${CLASH_URL}
 
+mkdir -p "$Conf_Dir" "$Temp_Dir" "$Log_Dir"
+
 if [ -x /usr/bin/awk ]; then
   AWK_BIN="/usr/bin/awk"
 else

@@ -41,6 +41,8 @@ Server_Dir=$(cd $(dirname "${BASH_SOURCE[0]}") && pwd)
 Conf_Dir="$Server_Dir/conf"
 Log_Dir="$Server_Dir/logs"
 
+mkdir -p "$Conf_Dir" "$Log_Dir"
+
 ## 关闭clash服务
 Text1="服务关闭成功！"
 Text2="服务关闭失败！"
@@ -83,4 +85,3 @@ else
 	echo -e "\033[31m\n[ERROR] Unsupported CPU Architecture！\033[0m"
 	exit 1
 fi
-
