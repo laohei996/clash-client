@@ -27,8 +27,16 @@ if [ -z "${CLASH_URL:-}" ]; then
   exit 1
 fi
 
-echo "正在构建镜像: ${Image_Name}"
-docker build -t "$Image_Name" "$Server_Dir"
+if docker image inspect "$Image_Name" >/dev/null 2>&1; then
+  echo "使用已有镜像: ${Image_Name}"
+elif [ "${SKIP_BUILD:-0}" = "1" ]; then
+  echo "[ERROR] 镜像不存在: ${Image_Name}" >&2
+  echo "请先导入镜像: docker load -i clash-for-linux_amd64.tar.gz" >&2
+  exit 1
+else
+  echo "正在构建镜像: ${Image_Name}"
+  docker build -t "$Image_Name" "$Server_Dir"
+fi
 
 Existing_Container=$(docker ps -aq -f "name=^/${Container_Name}$")
 if [ -n "$Existing_Container" ]; then
