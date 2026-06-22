@@ -92,6 +92,14 @@ Log_Dir="$Server_Dir/logs"
 
 mkdir -p "$Conf_Dir" "$Log_Dir"
 
+if [ -f "$Conf_Dir/config.yaml" ] && [ -d "$Server_Dir/dashboard/public" ]; then
+	Dashboard_Dir="${Conf_Dir}/ui"
+	rm -rf "$Dashboard_Dir"
+	mkdir -p "$Dashboard_Dir"
+	\cp -R "${Server_Dir}/dashboard/public/." "$Dashboard_Dir/"
+	sed -ri "s@^#?[[:space:]]*external-ui:.*@external-ui: ui@g" "$Conf_Dir/config.yaml"
+fi
+
 ## 关闭clash服务
 Text1="服务关闭成功！"
 Text2="服务关闭失败！"

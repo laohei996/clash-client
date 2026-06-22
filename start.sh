@@ -546,8 +546,12 @@ sed -ri "s@^secret: .*@secret: '$Secret'@g" $Conf_Dir/config.yaml
 
 # Configure Clash Dashboard
 Work_Dir=$(cd $(dirname $0); pwd)
-Dashboard_Dir="${Work_Dir}/dashboard/public"
-sed -ri "s@^# external-ui:.*@external-ui: ${Dashboard_Dir}@g" $Conf_Dir/config.yaml
+Dashboard_Source_Dir="${Work_Dir}/dashboard/public"
+Dashboard_Dir="${Conf_Dir}/ui"
+rm -rf "$Dashboard_Dir"
+mkdir -p "$Dashboard_Dir"
+\cp -R "${Dashboard_Source_Dir}/." "$Dashboard_Dir/"
+sed -ri "s@^#?[[:space:]]*external-ui:.*@external-ui: ui@g" $Conf_Dir/config.yaml
 # Get RESTful API Secret
 Secret=`grep '^secret: ' $Conf_Dir/config.yaml | grep -Po "(?<=secret: ').*(?=')"`
 
