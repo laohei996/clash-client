@@ -1,0 +1,14 @@
+.git
+.DS_Store
+Thumbs.db
+
+.env
+logs/
+*.log
+*.tar
+*.tar.gz
+
+conf/*
+!conf/.gitkeep
+temp/*
+!temp/templete_config.yaml

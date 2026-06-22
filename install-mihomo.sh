@@ -18,7 +18,7 @@ mkdir -p "$Bin_Dir"
 Cpu_Arch=$(uname -m)
 case "$Cpu_Arch" in
   x86_64|amd64)
-    Asset_Regex='mihomo-linux-amd64-v[0-9.]+\.gz'
+    Asset_Regex='mihomo-linux-amd64-compatible-v[0-9.]+\.gz'
     Target_Bin="mihomo-linux-amd64"
     Clash_Link="clash-linux-amd64"
     ;;
